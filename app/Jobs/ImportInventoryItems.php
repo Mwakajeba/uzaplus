@@ -2,8 +2,9 @@
 
 namespace App\Jobs;
 
-use App\Models\Inventory\Item;
 use App\Models\Inventory\ImportBatch;
+use App\Models\Inventory\Item;
+use App\Services\InventoryOpeningBalanceService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -21,27 +22,33 @@ class ImportInventoryItems implements ShouldQueue
     protected $companyId;
     protected $userId;
     protected $batchId;
+    protected $branchId;
+    protected $locationId;
 
-    public $timeout = 3600; // 1 hour timeout
+    public $timeout = 3600;
     public $tries = 3;
-    public $backoff = [60, 120, 300]; // Retry after 1, 2, 5 minutes
+    public $backoff = [60, 120, 300];
 
-    /**
-     * Create a new job instance.
-     */
-    public function __construct($filePath, $categoryId, $itemType, $companyId, $userId, $batchId = null)
-    {
+    public function __construct(
+        $filePath,
+        $categoryId,
+        $itemType,
+        $companyId,
+        $userId,
+        $batchId = null,
+        $branchId = null,
+        $locationId = null
+    ) {
         $this->filePath = $filePath;
         $this->categoryId = $categoryId;
         $this->itemType = $itemType;
         $this->companyId = $companyId;
         $this->userId = $userId;
         $this->batchId = $batchId;
+        $this->branchId = $branchId;
+        $this->locationId = $locationId;
     }
 
-    /**
-     * Execute the job.
-     */
     public function handle(): void
     {
         $batch = null;
@@ -49,14 +56,13 @@ class ImportInventoryItems implements ShouldQueue
         try {
             Log::info('Starting import job', [
                 'file' => $this->filePath,
-                'batch_id' => $this->batchId
+                'batch_id' => $this->batchId,
             ]);
 
             if ($this->batchId) {
                 $batch = ImportBatch::find($this->batchId);
                 if ($batch) {
                     $batch->markAsProcessing();
-                    Log::info('Batch marked as processing', ['batch_id' => $batch->id]);
                 }
             }
 
@@ -64,42 +70,33 @@ class ImportInventoryItems implements ShouldQueue
                 throw new \Exception("CSV file not found: {$this->filePath}");
             }
 
-            Log::info('Reading CSV file', ['file' => $this->filePath]);
-            
             $csvData = array_map('str_getcsv', file($this->filePath));
             if (empty($csvData)) {
-                throw new \Exception("CSV file is empty");
+                throw new \Exception('CSV file is empty');
             }
-            
-            $header = array_shift($csvData);
-            
-            Log::info('CSV Header', ['columns' => $header]);
 
-            // Validate CSV header
+            $header = array_map('trim', array_shift($csvData));
+
             $requiredColumns = ['name', 'code', 'unit_price'];
             $missingColumns = array_diff($requiredColumns, $header);
-            
+
             if (!empty($missingColumns)) {
                 throw new \Exception('Missing required columns: ' . implode(', ', $missingColumns));
             }
 
+            $openingBalanceService = new InventoryOpeningBalanceService();
             $imported = 0;
             $errors = [];
-            $batchSize = 100;
-            $items = [];
-            
-            Log::info('Processing CSV rows', ['total_rows' => count($csvData)]);
 
             foreach ($csvData as $rowIndex => $row) {
                 if (count($row) !== count($header)) {
-                    $errors[] = "Row " . ($rowIndex + 2) . ": Column count mismatch";
+                    $errors[] = 'Row ' . ($rowIndex + 2) . ': Column count mismatch';
                     continue;
                 }
 
                 $data = array_combine($header, $row);
-                
-                // Skip empty rows
-                if (empty(trim($data['name'])) || empty(trim($data['code']))) {
+
+                if (empty(trim($data['name'] ?? '')) || empty(trim($data['code'] ?? ''))) {
                     continue;
                 }
 
@@ -116,13 +113,40 @@ class ImportInventoryItems implements ShouldQueue
                     $wholesaleUnitPrice = null;
                     if ($wantsWholesale) {
                         $rawWs = $wholesalePriceCol ? trim((string) ($data['wholesale_unit_price'] ?? '')) : '';
-                        if ($rawWs === '' || ! is_numeric($rawWs) || (float) $rawWs <= 0) {
+                        if ($rawWs === '' || !is_numeric($rawWs) || (float) $rawWs <= 0) {
                             throw new \Exception('wholesale_unit_price is required and must be greater than 0 when has_wholesale is Yes');
                         }
                         $wholesaleUnitPrice = (float) $rawWs;
                     }
 
-                    $items[] = [
+                    $costPrice = isset($data['cost_price']) && is_numeric($data['cost_price'])
+                        ? (float) $data['cost_price']
+                        : 0;
+
+                    $openingBalanceQuantity = 0;
+                    if (array_key_exists('opening_balance_quantity', $data)) {
+                        $rawQty = trim((string) ($data['opening_balance_quantity'] ?? ''));
+                        if ($rawQty !== '') {
+                            if (!is_numeric($rawQty) || (float) $rawQty <= 0) {
+                                throw new \Exception('opening_balance_quantity must be a number greater than 0 when provided');
+                            }
+                            $openingBalanceQuantity = (float) $rawQty;
+                        }
+                    }
+
+                    if ($openingBalanceQuantity > 0) {
+                        if ($this->itemType !== 'product') {
+                            throw new \Exception('opening_balance_quantity is only allowed for product imports');
+                        }
+                        if ($costPrice <= 0) {
+                            throw new \Exception('cost_price is required and must be greater than 0 when opening_balance_quantity is provided');
+                        }
+                        if (!$this->branchId || !$this->locationId) {
+                            throw new \Exception('Branch and location must be selected before importing items with opening_balance_quantity');
+                        }
+                    }
+
+                    $item = Item::create([
                         'company_id' => $this->companyId,
                         'category_id' => $this->categoryId,
                         'name' => trim($data['name']),
@@ -130,7 +154,7 @@ class ImportInventoryItems implements ShouldQueue
                         'description' => isset($data['description']) ? trim($data['description']) : null,
                         'item_type' => $this->itemType,
                         'unit_of_measure' => isset($data['unit_of_measure']) ? trim($data['unit_of_measure']) : null,
-                        'cost_price' => isset($data['cost_price']) && is_numeric($data['cost_price']) ? $data['cost_price'] : null,
+                        'cost_price' => $costPrice ?: null,
                         'unit_price' => is_numeric($data['unit_price']) ? $data['unit_price'] : 0,
                         'has_wholesale' => $wantsWholesale,
                         'wholesale_unit_price' => $wholesaleUnitPrice,
@@ -139,69 +163,57 @@ class ImportInventoryItems implements ShouldQueue
                         'reorder_level' => isset($data['reorder_level']) && is_numeric($data['reorder_level']) ? $data['reorder_level'] : null,
                         'is_active' => true,
                         'track_stock' => $this->itemType === 'product',
-                        'track_expiry' => isset($data['track_expiry']) ? (strtolower(trim($data['track_expiry'])) === 'yes' || strtolower(trim($data['track_expiry'])) === 'true' || strtolower(trim($data['track_expiry'])) === '1') : false,
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ];
+                        'track_expiry' => isset($data['track_expiry'])
+                            ? in_array(strtolower(trim($data['track_expiry'])), ['yes', 'true', '1'], true)
+                            : false,
+                        'has_opening_balance' => false,
+                        'opening_balance_quantity' => 0,
+                        'opening_balance_value' => 0,
+                    ]);
 
-                    // Insert in batches
-                    if (count($items) >= $batchSize) {
-                        Log::info('Inserting batch', [
-                            'count' => count($items),
-                            'company_id' => $this->companyId,
-                            'category_id' => $this->categoryId
-                        ]);
-                        Item::insert($items);
-                        $imported += count($items);
-                        $items = [];
+                    if ($openingBalanceQuantity > 0) {
+                        $openingBalanceService->postForItem(
+                            $item,
+                            $openingBalanceQuantity,
+                            $costPrice,
+                            $this->locationId,
+                            $this->branchId,
+                            $this->companyId,
+                            $this->userId,
+                            'inventory item import'
+                        );
                     }
+
+                    $imported++;
                 } catch (\Exception $e) {
                     Log::error('Error processing row ' . ($rowIndex + 2), [
-                        'error' => $e->getMessage()
+                        'error' => $e->getMessage(),
                     ]);
-                    $errors[] = "Row " . ($rowIndex + 2) . ": " . $e->getMessage();
+                    $errors[] = 'Row ' . ($rowIndex + 2) . ': ' . $e->getMessage();
                 }
             }
 
-            // Insert remaining items
-            if (!empty($items)) {
-                Log::info('Inserting final batch', [
-                    'count' => count($items)
-                ]);
-                Item::insert($items);
-                $imported += count($items);
-            }
-
-            // Log the import completion
             $message = "Successfully imported {$imported} inventory items.";
             if (!empty($errors)) {
-                $message .= " " . count($errors) . " errors occurred.";
+                $message .= ' ' . count($errors) . ' errors occurred.';
                 Log::warning($message, ['errors' => $errors]);
             } else {
                 Log::info($message);
             }
 
-            // Mark batch as completed
             if ($batch) {
                 $batch->markAsCompleted($imported, count($errors), json_encode($errors));
-                Log::info('Batch marked as completed', [
-                    'batch_id' => $batch->id,
-                    'imported' => $imported
-                ]);
             }
 
-            // Clean up the temporary file
             if (file_exists($this->filePath)) {
                 unlink($this->filePath);
-                Log::info('Temporary file deleted');
             }
-
         } catch (\Exception $e) {
             Log::error('Inventory items import failed: ' . $e->getMessage(), [
                 'file' => $this->filePath,
                 'company_id' => $this->companyId,
                 'user_id' => $this->userId,
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             if ($batch) {
@@ -217,7 +229,7 @@ class ImportInventoryItems implements ShouldQueue
         Log::error('Inventory items import job failed after retries: ' . $exception->getMessage(), [
             'file' => $this->filePath,
             'company_id' => $this->companyId,
-            'user_id' => $this->userId
+            'user_id' => $this->userId,
         ]);
 
         if ($this->batchId) {
@@ -227,7 +239,6 @@ class ImportInventoryItems implements ShouldQueue
             }
         }
 
-        // Clean up the temporary file
         if (file_exists($this->filePath)) {
             unlink($this->filePath);
         }

@@ -25,7 +25,7 @@ class CheckSubscriptionStatus
         }
 
         $user = Auth::user();
-        $companyId = $user->company_id;
+        $companyId = session('company_id') ?: $user->company_id;
 
         // Skip check for super admin or if user is already locked
         if ($user->status === 'locked' || !$companyId) {

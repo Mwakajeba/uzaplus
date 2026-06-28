@@ -161,10 +161,11 @@
 
                     <div class="alert alert-info">
                         <i class="bx bx-info-circle me-2"></i>
-                        <strong>CSV format:</strong> Required columns: <code>name</code>, <code>code</code>, <code>unit_price</code>. Optional: <code>description</code>, <code>unit_of_measure</code>, <code>cost_price</code>, <code>minimum_stock</code>, <code>maximum_stock</code>, <code>reorder_level</code>, <code>track_expiry</code>.
+                        <strong>CSV format:</strong> Required columns: <code>name</code>, <code>code</code>, <code>unit_price</code>. Optional: <code>description</code>, <code>unit_of_measure</code>, <code>cost_price</code>, <code>minimum_stock</code>, <code>maximum_stock</code>, <code>reorder_level</code>, <code>opening_balance_quantity</code>, <code>track_expiry</code>.
                         <strong>Wholesale (optional):</strong> add <code>has_wholesale</code> and <code>wholesale_unit_price</code> — use the &quot;With wholesale columns&quot; template below.
                         <br>
                         <small>
+                            <strong>opening_balance_quantity:</strong> optional starting stock at your current location (same as create form). Requires <code>cost_price</code> and selected branch/location. Leave blank for zero stock.<br>
                             <strong>track_expiry:</strong> <code>Yes</code>, <code>True</code>, or <code>1</code> for perishables; otherwise <code>No</code> / <code>0</code>.<br>
                             <strong>has_wholesale:</strong> <code>Yes</code> / <code>True</code> / <code>1</code> only if you provide a positive <code>wholesale_unit_price</code>.<br>
                             Default accounts come from inventory settings.

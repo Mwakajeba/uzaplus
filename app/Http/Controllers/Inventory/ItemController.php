@@ -33,8 +33,10 @@ use App\Models\GlTransaction;
 use App\Models\AccountClass;
 use App\Models\AccountClassGroup;
 use App\Services\InventoryCostService;
+use App\Services\InventoryOpeningBalanceService;
 use App\Models\InventoryCostLayer;
 use App\Models\Inventory\OpeningBalance;
+use App\Models\SystemSetting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -230,7 +232,12 @@ class ItemController extends Controller
             $prefillCategoryId = $decoded[0] ?? null;
         }
 
-        return view('inventory.items.create', compact('categories', 'locations', 'inventoryAccounts', 'salesAccounts', 'costAccounts', 'vatAccounts', 'withholdingTaxAccounts', 'withholdingTaxExpenseAccounts', 'purchasePayableAccounts', 'discountAccounts', 'discountIncomeAccounts', 'prefillCategoryId'));
+        $loginLocationId = session('location_id');
+        $loginLocationName = $loginLocationId
+            ? InventoryLocation::where('id', $loginLocationId)->value('name')
+            : null;
+
+        return view('inventory.items.create', compact('categories', 'locations', 'inventoryAccounts', 'salesAccounts', 'costAccounts', 'vatAccounts', 'withholdingTaxAccounts', 'withholdingTaxExpenseAccounts', 'purchasePayableAccounts', 'discountAccounts', 'discountIncomeAccounts', 'prefillCategoryId', 'loginLocationName'));
     }
 
     public function store(Request $request)
@@ -261,34 +268,55 @@ class ItemController extends Controller
             'track_expiry' => 'nullable|boolean',
             'has_different_sales_revenue_account' => 'nullable|boolean',
             'sales_revenue_account_id' => 'nullable|required_if:has_different_sales_revenue_account,1|exists:chart_accounts,id',
+            'has_opening_balance' => 'nullable|boolean',
+            'opening_balance_quantity' => 'nullable|numeric|min:0',
         ]);
 
-        // Opening balance via items form deprecated; handled via adjustments/opening balance section
+        $hasOpeningBalance = $request->boolean('has_opening_balance');
+        $openingBalanceQuantity = $hasOpeningBalance ? (float) ($request->opening_balance_quantity ?? 0) : 0;
+
+        // For service items, cost_price should always be 0
+        // For product items, use provided cost_price or default to 0
+        $costPrice = $request->cost_price ?? 0;
+        if ($request->item_type === 'service') {
+            $costPrice = 0;
+        }
+
+        if ($hasOpeningBalance) {
+            $request->validate([
+                'item_type' => 'required|in:product',
+                'opening_balance_quantity' => 'required|numeric|min:0.01',
+                'cost_price' => 'required|numeric|min:0.01',
+            ], [
+                'item_type.in' => 'Opening balance is only allowed for product items.',
+                'opening_balance_quantity.required' => 'Opening balance quantity is required when has opening balance is enabled.',
+                'cost_price.required' => 'Cost price is required when has opening balance is enabled.',
+                'cost_price.min' => 'Cost price must be greater than zero when has opening balance is enabled.',
+            ]);
+
+            if (!$request->has('track_stock')) {
+                return redirect()->back()
+                    ->withErrors(['opening_balance_quantity' => 'Track stock must be enabled to record opening balance quantity.'])
+                    ->withInput();
+            }
+
+            if (!session('location_id') || !session('branch_id')) {
+                return redirect()->back()
+                    ->withErrors(['opening_balance_quantity' => 'Please select your company branch and location before recording opening balance.'])
+                    ->withInput();
+            }
+        }
 
         try {
             DB::beginTransaction();
 
-            // Initial stock is zero; opening balances are handled in adjustments
-            $initialStock = 0;
-
-            // For service items, cost_price should always be 0
-            // For product items, use provided cost_price or default to 0
-            $costPrice = $request->cost_price ?? 0;
-            if ($request->item_type === 'service') {
-                $costPrice = 0; // Services don't have a cost price
-            }
-
-            // Calculate opening balance value automatically
-            $openingBalanceValue = 0;
-            if ($request->boolean('has_opening_balance') && $request->opening_balance_quantity > 0) {
-                $openingBalanceValue = $request->opening_balance_quantity * $costPrice;
-            }
+            $openingBalanceValue = $openingBalanceQuantity > 0 ? $openingBalanceQuantity * $costPrice : 0;
 
             $hasWholesale = $request->boolean('has_wholesale');
             $wholesaleUnitPrice = $hasWholesale ? ($request->wholesale_unit_price ?? 0) : null;
 
             $item = Item::create([
-                'company_id' => Auth::user()->company_id,
+                'company_id' => current_company_id() ?? Auth::user()->company_id,
                 'category_id' => $request->category_id,
                 'name' => $request->name,
                 'code' => $request->code,
@@ -305,14 +333,21 @@ class ItemController extends Controller
                 'is_active' => $request->has('is_active'),
                 'track_stock' => $request->has('track_stock'),
                 'track_expiry' => $request->has('track_expiry'),
-                'has_opening_balance' => false,
-                'opening_balance_quantity' => 0,
-                'opening_balance_value' => 0,
+                'has_opening_balance' => $hasOpeningBalance && $openingBalanceQuantity > 0,
+                'opening_balance_quantity' => $openingBalanceQuantity,
+                'opening_balance_value' => $openingBalanceValue,
                 'has_different_sales_revenue_account' => $request->has('has_different_sales_revenue_account'),
                 'sales_revenue_account_id' => $request->has('has_different_sales_revenue_account') ? $request->sales_revenue_account_id : null,
             ]);
 
-            // Opening balance transactions/movements will be created from the Opening Balance section
+            if ($openingBalanceQuantity > 0) {
+                app(InventoryOpeningBalanceService::class)->postForItem(
+                    $item,
+                    $openingBalanceQuantity,
+                    $costPrice,
+                    source: 'inventory item create form'
+                );
+            }
 
             DB::commit();
 
@@ -530,7 +565,12 @@ class ItemController extends Controller
         $branchPricesByBranch = $item->branchPrices()->get()->keyBy('branch_id');
         $locationPricesByLocation = $item->locationPrices()->get()->keyBy('location_id');
 
-        return view('inventory.items.edit', compact('item', 'categories', 'locations', 'inventoryAccounts', 'salesAccounts', 'costAccounts', 'vatAccounts', 'withholdingTaxAccounts', 'withholdingTaxExpenseAccounts', 'purchasePayableAccounts', 'discountAccounts', 'discountIncomeAccounts', 'branches', 'branchPricesByBranch', 'locationPricesByLocation'));
+        $loginLocationId = session('location_id');
+        $loginLocationName = $loginLocationId
+            ? InventoryLocation::where('id', $loginLocationId)->value('name')
+            : null;
+
+        return view('inventory.items.edit', compact('item', 'categories', 'locations', 'inventoryAccounts', 'salesAccounts', 'costAccounts', 'vatAccounts', 'withholdingTaxAccounts', 'withholdingTaxExpenseAccounts', 'purchasePayableAccounts', 'discountAccounts', 'discountIncomeAccounts', 'branches', 'branchPricesByBranch', 'locationPricesByLocation', 'loginLocationName'));
     }
 
     public function update(Request $request, $encodedId)
@@ -605,9 +645,9 @@ class ItemController extends Controller
             }
 
             // Check if opening balance is being added for the first time
-            $isAddingOpeningBalance = $request->boolean('has_opening_balance') && 
-                                    !$item->has_opening_balance && 
-                                    $request->opening_balance_quantity > 0;
+            $isAddingOpeningBalance = $request->boolean('has_opening_balance') &&
+                                    !$itemHasOpening &&
+                                    (float) $request->opening_balance_quantity > 0;
 
             // If item already has opening balance, prevent editing its quantity/value via edit form
             $preserveOpeningQty = $itemHasOpening;
@@ -644,9 +684,32 @@ class ItemController extends Controller
                 'track_stock' => $request->has('track_stock'),
                 'track_expiry' => $request->has('track_expiry'),
                 'has_opening_balance' => $hasOpeningBalanceFinal,
+                'opening_balance_quantity' => $isAddingOpeningBalance
+                    ? (float) $request->opening_balance_quantity
+                    : ($preserveOpeningQty ? $item->opening_balance_quantity : 0),
+                'opening_balance_value' => $isAddingOpeningBalance
+                    ? $openingBalanceValue
+                    : ($preserveOpeningQty ? $item->opening_balance_value : 0),
                 'has_different_sales_revenue_account' => $request->has('has_different_sales_revenue_account'),
                 'sales_revenue_account_id' => $request->has('has_different_sales_revenue_account') ? $request->sales_revenue_account_id : null,
             ]);
+
+            if ($isAddingOpeningBalance) {
+                if (!$request->has('track_stock')) {
+                    throw new \RuntimeException('Track stock must be enabled to record opening balance.');
+                }
+
+                if (!session('location_id') || !session('branch_id')) {
+                    throw new \RuntimeException('Please select your company branch and location before recording opening balance.');
+                }
+
+                app(InventoryOpeningBalanceService::class)->postForItem(
+                    $item->fresh(),
+                    (float) $request->opening_balance_quantity,
+                    (float) $costPrice,
+                    source: 'inventory item edit form'
+                );
+            }
 
             // Sync branch-specific prices (override per branch; empty = use item default)
             if (Schema::hasTable('inventory_item_prices')) {
@@ -864,9 +927,11 @@ class ItemController extends Controller
                 $fullPath,
                 $request->category_id,
                 $request->item_type,
-                Auth::user()->company_id,
+                current_company_id() ?? Auth::user()->company_id,
                 Auth::id(),
-                $batch->id
+                $batch->id,
+                session('branch_id'),
+                session('location_id')
             );
             
             try {
@@ -927,6 +992,7 @@ class ItemController extends Controller
             'minimum_stock',
             'maximum_stock',
             'reorder_level',
+            'opening_balance_quantity',
             'track_expiry',
         ];
 
@@ -957,9 +1023,13 @@ class ItemController extends Controller
         $sampleData = [];
         $rowIndex = 0;
         foreach ($baseSampleData as $row) {
+            $trackExpiry = array_pop($row);
+            $openingQty = in_array($row[1] ?? '', ['AQ500', 'DS500'], true) ? '' : (string) (($rowIndex + 1) * 10);
+            $row[] = $openingQty;
+            $row[] = $trackExpiry;
+
             if ($variant === 'wholesale') {
                 $unitPrice = is_numeric($row[5] ?? null) ? (float) $row[5] : 0;
-                // First rows: wholesale enabled with ~10% below retail; water rows: retail only
                 if ($rowIndex < 12 && $unitPrice > 0) {
                     $wholesale = number_format(round($unitPrice * 0.9, 2), 2, '.', '');
                     $sampleData[] = array_merge($row, ['Yes', $wholesale]);
@@ -1053,42 +1123,6 @@ class ItemController extends Controller
     }
 
 
-
-    /**
-     * Create opening balance inventory movement
-     */
-    private function createOpeningBalanceMovement($item, $quantity)
-    {
-        $costService = new InventoryCostService();
-        
-        // Add to cost layers
-        $costService->addInventory(
-            $item->id,
-            $quantity,
-            $item->cost_price ?? 0,
-            'opening_balance',
-            'Opening Balance - ' . $item->code,
-            now()->toDateString()
-        );
-
-        $branch_id = session('branch_id') ?? Auth::user()->branch_id ?? 1;
-
-        Movement::create([
-            'branch_id' => $branch_id,
-            'location_id' => session('location_id'),
-            'item_id' => $item->id,
-            'user_id' => auth()->id(),
-            'movement_type' => 'opening_balance',
-            'quantity' => $quantity,
-            'unit_cost' => $item->cost_price ?? 0,
-            'total_cost' => ($item->cost_price ?? 0) * $quantity,
-            'balance_before' => 0,
-            'balance_after' => $quantity,
-            'reference' => 'Opening Balance - ' . $item->code,
-            'notes' => 'Opening balance stock entry',
-            'movement_date' => now()->toDateString(),
-        ]);
-    }
 
     public function importStatus($batchId)
     {

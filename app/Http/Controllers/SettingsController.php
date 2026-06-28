@@ -15,6 +15,7 @@ use App\Rules\PasswordValidation;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 use Vinkla\Hashids\Facades\Hashids;
 use App\Models\ApprovalLevel;
 use App\Models\ApprovalLevelAssignment;
@@ -36,9 +37,181 @@ class SettingsController extends Controller
 
     public function companySettings()
     {
-        $company = auth()->user()->company;
+        $this->authorizeCompanyManagement();
 
-        return view('settings.company', compact('company'));
+        return view('settings.company');
+    }
+
+    public function companiesData(Request $request)
+    {
+        $this->authorizeCompanyManagement();
+
+        $query = Company::query()->withCount(['branches', 'users']);
+
+        if ($request->has('search') && !empty($request->search['value'])) {
+            $search = $request->search['value'];
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%")
+                    ->orWhere('phone', 'like', "%{$search}%")
+                    ->orWhere('license_number', 'like', "%{$search}%")
+                    ->orWhere('address', 'like', "%{$search}%");
+            });
+        }
+
+        $totalRecords = Company::count();
+        $filteredRecords = (clone $query)->count();
+
+        if ($request->has('order') && !empty($request->order)) {
+            $orderColumn = (int) ($request->order[0]['column'] ?? 0);
+            $orderDir = $request->order[0]['dir'] ?? 'asc';
+            $columns = ['name', 'email', 'phone', 'license_number', 'status', 'branches_count'];
+            $orderBy = $columns[$orderColumn] ?? 'name';
+            if ($orderBy === 'branches_count') {
+                $query->orderBy('branches_count', $orderDir);
+            } else {
+                $query->orderBy($orderBy, $orderDir);
+            }
+        } else {
+            $query->orderBy('name', 'asc');
+        }
+
+        $start = (int) ($request->start ?? 0);
+        $length = (int) ($request->length ?? 10);
+        if ($length > 0) {
+            $query->skip($start)->take($length);
+        }
+
+        $csrf = csrf_token();
+        $companies = $query->get();
+
+        $data = $companies->map(function (Company $company) use ($csrf) {
+            $statusBadge = match ($company->status) {
+                'active' => '<span class="badge bg-success">Active</span>',
+                'inactive' => '<span class="badge bg-warning">Inactive</span>',
+                default => '<span class="badge bg-danger">Suspended</span>',
+            };
+
+            $name = e($company->name);
+            $actions = '<div class="d-flex gap-1">';
+            $actions .= '<a href="' . route('settings.company.show', $company) . '" class="btn btn-sm btn-info" title="View"><i class="bx bx-show"></i></a>';
+            $actions .= '<a href="' . route('settings.company.edit', $company) . '" class="btn btn-sm btn-primary" title="Edit"><i class="bx bx-edit"></i></a>';
+            $actions .= '<form action="' . route('settings.company.destroy', $company) . '" method="POST" style="display:inline-block;" class="delete-form">';
+            $actions .= '<input type="hidden" name="_token" value="' . $csrf . '">';
+            $actions .= '<input type="hidden" name="_method" value="DELETE">';
+            $actions .= '<button type="submit" class="btn btn-sm btn-danger" data-name="' . $name . '" title="Delete"><i class="bx bx-trash"></i></button>';
+            $actions .= '</form>';
+            $actions .= '</div>';
+
+            return [
+                'name' => $name,
+                'email' => e($company->email ?? '-'),
+                'phone' => e($company->phone ?? '-'),
+                'license_number' => e($company->license_number ?? '-'),
+                'status' => $statusBadge,
+                'branches_count' => $company->branches_count,
+                'actions' => $actions,
+            ];
+        });
+
+        return response()->json([
+            'draw' => (int) ($request->draw ?? 1),
+            'recordsTotal' => $totalRecords,
+            'recordsFiltered' => $filteredRecords,
+            'data' => $data,
+        ]);
+    }
+
+    public function createCompany()
+    {
+        $this->authorizeCompanyManagement();
+
+        return view('settings.company.create');
+    }
+
+    public function storeCompany(Request $request)
+    {
+        $this->authorizeCompanyManagement();
+
+        $data = $this->validateCompanyRequest($request);
+        $data['company_id'] = (string) Str::uuid();
+        $data['status'] = $request->input('status', 'active');
+        $data['functional_currency'] = $request->input('functional_currency', 'TZS');
+
+        if ($request->hasFile('logo')) {
+            $data['logo'] = $this->storeCompanyLogo($request->file('logo'));
+        }
+
+        Company::create($data);
+
+        return redirect()->route('settings.company')->with('success', 'Company created successfully!');
+    }
+
+    public function showCompany(Company $company)
+    {
+        $this->authorizeCompanyManagement();
+
+        $company->loadCount(['branches', 'users']);
+
+        return view('settings.company.show', compact('company'));
+    }
+
+    public function editCompany(Company $company)
+    {
+        $this->authorizeCompanyManagement();
+
+        return view('settings.company.edit', compact('company'));
+    }
+
+    public function updateCompany(Request $request, Company $company)
+    {
+        $this->authorizeCompanyManagement();
+
+        $data = $this->validateCompanyRequest($request, $company);
+
+        if ($request->hasFile('logo')) {
+            if ($company->logo && Storage::disk('public')->exists($company->logo)) {
+                Storage::disk('public')->delete($company->logo);
+            }
+            $data['logo'] = $this->storeCompanyLogo($request->file('logo'), $company->id);
+        }
+
+        $company->update($data);
+
+        return redirect()->route('settings.company')->with('success', 'Company updated successfully!');
+    }
+
+    public function destroyCompany(Company $company)
+    {
+        $this->authorizeCompanyManagement();
+
+        if ($company->users()->count() > 0) {
+            return redirect()->route('settings.company')->with('error', 'Cannot delete company with active users.');
+        }
+
+        if ($company->branches()->count() > 0) {
+            return redirect()->route('settings.company')->with('error', 'Cannot delete company with branches. Remove branches first.');
+        }
+
+        if (Company::count() <= 1) {
+            return redirect()->route('settings.company')->with('error', 'Cannot delete the only company in the system.');
+        }
+
+        try {
+            if ($company->logo && Storage::disk('public')->exists($company->logo)) {
+                Storage::disk('public')->delete($company->logo);
+            }
+
+            $company->delete();
+
+            return redirect()->route('settings.company')->with('success', 'Company deleted successfully!');
+        } catch (\Illuminate\Database\QueryException $e) {
+            if ($e->getCode() == 23000) {
+                return redirect()->route('settings.company')->with('error', 'Cannot delete company because it is linked to other records.');
+            }
+
+            throw $e;
+        }
     }
 
     /**
@@ -70,53 +243,6 @@ class SettingsController extends Controller
         ]);
     }
 
-    public function updateCompanySettings(Request $request)
-    {
-        $company = auth()->user()->company;
-
-        // Custom validation for email to handle existing email
-        $emailRules = 'required|email';
-        if ($request->email !== $company->email) {
-            $emailRules .= '|unique:companies,email,' . $company->id . ',id';
-        }
-
-        // Custom validation for license_number to handle existing license
-        $licenseRules = 'required|string';
-        if ($request->license_number !== $company->license_number) {
-            $licenseRules .= '|unique:companies,license_number,' . $company->id . ',id';
-        }
-
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => $emailRules,
-            'phone' => 'required|string|max:20',
-            'address' => 'required|string',
-            'license_number' => $licenseRules,
-            'registration_date' => 'required|date',
-            'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
-            'bg_color' => 'nullable|string|max:7',
-            'txt_color' => 'nullable|string|max:7',
-        ]);
-
-        $data = $request->except('logo');
-
-        if ($request->hasFile('logo')) {
-            // Delete old logo if exists
-            if ($company->logo && Storage::disk('public')->exists($company->logo)) {
-                Storage::disk('public')->delete($company->logo);
-            }
-
-            $logo = $request->file('logo');
-            $logoName = 'company_' . $company->id . '_' . time() . '.' . $logo->getClientOriginalExtension();
-            $logoPath = $logo->storeAs('uploads/companies', $logoName, 'public');
-            $data['logo'] = $logoPath;
-        }
-
-        $company->update($data);
-
-        return redirect()->route('settings.company')->with('success', 'Company settings updated successfully!');
-    }
-
     public function branchSettings(Request $request)
     {
         // If this is an AJAX request for DataTables, return JSON
@@ -129,32 +255,47 @@ class SettingsController extends Controller
 
     public function branchesData(Request $request)
     {
-        $query = Branch::with('manager')->where('company_id', auth()->user()->company_id);
+        $user = auth()->user();
+        $query = Branch::with('company');
+
+        if (!$user->hasRole('super-admin')) {
+            $query->where('company_id', $user->company_id);
+        }
 
         // Apply search filter
         if ($request->has('search') && $request->search['value']) {
             $search = $request->search['value'];
             $query->where(function($q) use ($search) {
                 $q->where('branch_name', 'like', "%{$search}%")
-                  ->orWhere('location', 'like', "%{$search}%")
                   ->orWhere('phone', 'like', "%{$search}%")
-                  ->orWhere('email', 'like', "%{$search}%")
-                  ->orWhere('manager_name', 'like', "%{$search}%");
+                  ->orWhereHas('company', function ($companyQuery) use ($search) {
+                      $companyQuery->where('name', 'like', "%{$search}%");
+                  });
             });
         }
 
         // Get total count before pagination
-        $totalRecords = Branch::where('company_id', auth()->user()->company_id)->count();
+        $totalQuery = Branch::query();
+        if (!$user->hasRole('super-admin')) {
+            $totalQuery->where('company_id', $user->company_id);
+        }
+        $totalRecords = $totalQuery->count();
         $filteredRecords = $query->count();
 
         // Apply ordering
         if ($request->has('order') && !empty($request->order)) {
             $orderColumn = $request->order[0]['column'] ?? 0;
             $orderDir = $request->order[0]['dir'] ?? 'asc';
-            // Columns must match the DataTables columns (location removed from index view)
-            $columns = ['branch_name', 'phone', 'email', 'manager_name', 'status'];
+            $columns = ['branch_name', 'phone', 'company_name', 'status'];
             $orderBy = $columns[$orderColumn] ?? 'branch_name';
-            $query->orderBy($orderBy, $orderDir);
+
+            if ($orderBy === 'company_name') {
+                $query->join('companies', 'branches.company_id', '=', 'companies.id')
+                    ->orderBy('companies.name', $orderDir)
+                    ->select('branches.*');
+            } else {
+                $query->orderBy($orderBy, $orderDir);
+            }
         } else {
             $query->orderBy('branch_name', 'asc');
         }
@@ -187,8 +328,7 @@ class SettingsController extends Controller
             return [
                 'branch_name' => e($branch->branch_name),
                 'phone' => e($branch->phone ?? '-'),
-                'email' => e($branch->email ?? '-'),
-                'manager_name' => e($branch->manager->name ?? ($branch->manager_name ?? '-')),
+                'company_name' => e($branch->company->name ?? '-'),
                 'status' => $statusBadge,
                 'actions' => $actions,
             ];
@@ -204,125 +344,55 @@ class SettingsController extends Controller
 
     public function createBranch()
     {
-        $users = \App\Models\User::where('company_id', auth()->user()->company_id)
-            ->where('status', 'active')
-            ->orderBy('name')
-            ->get();
-        
-        return view('settings.branches.create', compact('users'));
+        $companies = Company::orderBy('name')->get();
+
+        return view('settings.branches.create', compact('companies'));
     }
 
     public function storeBranch(Request $request)
     {
-        // Normalize manager_id - convert empty string to null
-        if ($request->has('manager_id') && $request->manager_id === '') {
-            $request->merge(['manager_id' => null]);
-        }
-
         $request->validate([
-            'name' => 'required|string|max:255',
+            'company_id' => 'required|exists:companies,id',
             'branch_name' => 'required|string|max:255',
-            'email' => 'nullable|email|unique:branches,email,NULL,id,company_id,' . auth()->user()->company_id,
             'phone' => 'required|string|max:20',
-            'address' => 'required|string',
-            'manager_id' => 'nullable|exists:users,id',
-            'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
             'status' => 'required|in:active,inactive',
         ]);
 
-        $data = [
-            'company_id' => auth()->user()->company_id,
-            'name' => $request->name,
+        Branch::create([
+            'company_id' => $request->company_id,
+            'name' => $request->branch_name,
             'branch_name' => $request->branch_name,
-            'email' => $request->email,
             'phone' => $request->phone,
-            'address' => $request->address,
-            'manager_id' => $request->manager_id,
-            'branch_id' => \Illuminate\Support\Str::uuid(),
+            'branch_id' => Str::uuid(),
             'status' => $request->status,
-        ];
-
-        // Handle logo upload
-        if ($request->hasFile('logo')) {
-            $logo = $request->file('logo');
-            $logoName = time() . '_' . $logo->getClientOriginalName();
-            $logoPath = $logo->storeAs('branches/logos', $logoName, 'public');
-            $data['logo'] = $logoPath;
-        }
-
-        $branch = Branch::create($data);
+        ]);
 
         return redirect()->route('settings.branches')->with('success', 'Branch created successfully!');
     }
 
     public function editBranch(Branch $branch)
     {
-        // Ensure branch belongs to current company
-        if ($branch->company_id !== auth()->user()->company_id) {
-            abort(403, 'Unauthorized access.');
-        }
+        $companies = Company::orderBy('name')->get();
 
-        $users = \App\Models\User::where('company_id', auth()->user()->company_id)
-            ->where('status', 'active')
-            ->orderBy('name')
-            ->get();
-
-        return view('settings.branches.edit', compact('branch', 'users'));
+        return view('settings.branches.edit', compact('branch', 'companies'));
     }
 
     public function updateBranch(Request $request, Branch $branch)
     {
-        // Ensure branch belongs to current company
-        if ($branch->company_id !== auth()->user()->company_id) {
-            abort(403, 'Unauthorized access.');
-        }
-
-        // Normalize manager_id - convert empty string to null
-        if ($request->has('manager_id') && $request->manager_id === '') {
-            $request->merge(['manager_id' => null]);
-        }
-
-        // Custom validation for email to handle existing email
-        $emailRules = 'nullable|email';
-        if ($request->email !== $branch->email) {
-            $emailRules .= '|unique:branches,email,' . $branch->id . ',id,company_id,' . auth()->user()->company_id;
-        }
-
         $request->validate([
-            'name' => 'required|string|max:255',
+            'company_id' => 'required|exists:companies,id',
             'branch_name' => 'required|string|max:255',
-            'email' => $emailRules,
             'phone' => 'required|string|max:20',
-            'address' => 'required|string',
-            'manager_id' => 'nullable|exists:users,id',
-            'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
             'status' => 'required|in:active,inactive',
         ]);
 
-        $data = [
-            'name' => $request->name,
+        $branch->update([
+            'company_id' => $request->company_id,
+            'name' => $request->branch_name,
             'branch_name' => $request->branch_name,
-            'email' => $request->email,
             'phone' => $request->phone,
-            'address' => $request->address,
-            'manager_id' => $request->manager_id,
             'status' => $request->status,
-        ];
-
-        // Handle logo upload
-        if ($request->hasFile('logo')) {
-            // Delete old logo if exists
-            if ($branch->logo && Storage::disk('public')->exists($branch->logo)) {
-                Storage::disk('public')->delete($branch->logo);
-            }
-            
-            $logo = $request->file('logo');
-            $logoName = time() . '_' . $logo->getClientOriginalName();
-            $logoPath = $logo->storeAs('branches/logos', $logoName, 'public');
-            $data['logo'] = $logoPath;
-        }
-
-        $branch->update($data);
+        ]);
 
         return redirect()->route('settings.branches')->with('success', 'Branch updated successfully!');
     }
@@ -2535,5 +2605,52 @@ class SettingsController extends Controller
                 'message' => 'Failed to start queue worker: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    private function authorizeCompanyManagement(): void
+    {
+        $user = auth()->user();
+
+        if (!$user->can('manage campany setting')
+            && !$user->can('manage company settings')
+            && !$user->can('manage company setting')
+            && !$user->hasRole('admin')
+            && !$user->hasRole('super-admin')) {
+            abort(403, 'You do not have permission to manage company settings.');
+        }
+    }
+
+    private function validateCompanyRequest(Request $request, ?Company $company = null): array
+    {
+        $emailRules = 'required|email';
+        if (!$company || $request->email !== $company->email) {
+            $emailRules .= '|unique:companies,email' . ($company ? ',' . $company->id . ',id' : '');
+        }
+
+        $licenseRules = 'nullable|string|max:255';
+        if ($request->filled('license_number') && (!$company || $request->license_number !== $company->license_number)) {
+            $licenseRules .= '|unique:companies,license_number' . ($company ? ',' . $company->id . ',id' : '');
+        }
+
+        return $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => $emailRules,
+            'phone' => 'required|string|max:20',
+            'address' => 'required|string',
+            'license_number' => $licenseRules,
+            'registration_date' => 'nullable|date',
+            'status' => 'required|in:active,inactive,suspended',
+            'functional_currency' => 'nullable|string|size:3',
+            'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'bg_color' => 'nullable|string|max:7',
+            'txt_color' => 'nullable|string|max:7',
+        ]);
+    }
+
+    private function storeCompanyLogo($logo, ?int $companyId = null): string
+    {
+        $logoName = 'company_' . ($companyId ?? 'new') . '_' . time() . '.' . $logo->getClientOriginalExtension();
+
+        return $logo->storeAs('uploads/companies', $logoName, 'public');
     }
 }

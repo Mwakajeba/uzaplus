@@ -12,8 +12,8 @@ class Company extends Model
     use HasFactory,LogsActivity;
     protected $fillable = [
         'name', 'email', 'phone', 'address', 'logo', 'bg_color', 'txt_color',
-        'company_id', 'license_number', 'registration_date', 'status'
-];
+        'company_id', 'license_number', 'registration_date', 'status', 'functional_currency',
+    ];
 
 public function branches()
 {
@@ -23,6 +23,13 @@ public function branches()
     public function users()
     {
         return $this->hasMany(User::class);
+    }
+
+    public function assignedUsers()
+    {
+        return $this->belongsToMany(User::class, 'user_company')
+            ->withTimestamps()
+            ->withPivot(['is_default']);
     }
 
     public function scopeActive($query)

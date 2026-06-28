@@ -121,8 +121,9 @@ class UserController extends Controller
         $roles = Role::where('guard_name', 'web')
             ->orderBy('name')
             ->get();
+        $companies = $this->availableCompaniesForAssignment();
 
-        return view('users.form', compact('roles'));
+        return view('users.create', compact('roles', 'companies'));
     }
 
     public function store(Request $request)
@@ -144,7 +145,10 @@ class UserController extends Controller
                 'phone' => 'required|string|max:20|unique:users,phone,NULL,id,company_id,' . current_company_id(),
                 'role_id' => 'required|exists:roles,id',
                 'status' => 'required|in:active,inactive',
-                'password' => ['required', 'string', 'min:8', 'confirmed', new PasswordValidation(null)],
+                'password' => ['required', 'string', 'min:6', 'confirmed'],
+                'companies' => 'required|array|min:1',
+                'companies.*' => 'exists:companies,id',
+                'primary_company_id' => 'required|exists:companies,id',
             ];
 
             $validator = \Validator::make($request->all(), $rules);
@@ -163,16 +167,26 @@ class UserController extends Controller
 
             \Log::info('User creation validation passed');
 
+            $primaryCompanyId = (int) $request->primary_company_id;
+            if (!in_array($primaryCompanyId, array_map('intval', $request->companies ?? []), true)) {
+                DB::rollBack();
+                return redirect()->back()
+                    ->withErrors(['primary_company_id' => 'Primary company must be one of the selected companies.'])
+                    ->withInput($request->except(['password', 'password_confirmation']));
+            }
+
             // Create user directly
             $user = User::create([
                     'name' => $request->name,
                     'phone' => $this->formatPhoneNumber($request->phone),
                     'email' => $request->email,
                     'password' => Hash::make($request->password), // Temporary, will be updated by PasswordService
-                    'company_id' => current_company_id(),
+                    'company_id' => $primaryCompanyId,
                     'status' => $request->status,
                     'is_active' => $request->status === 'active' ? 'yes' : 'no',
                 ]);
+
+            $this->syncUserCompanies($user, $request->companies, $primaryCompanyId);
                 
             // Use PasswordService to properly set password with history tracking
             $passwordService = new PasswordService();
@@ -242,9 +256,11 @@ class UserController extends Controller
         }
 
         // Load user relationships including branches and locations
-        $user->load(['branches', 'company', 'roles', 'permissions', 'locations']);
+        $user->load(['branches', 'company', 'companies', 'roles', 'permissions', 'locations']);
 
-        return view('users.show', compact('user'));
+        $companies = $this->availableCompaniesForAssignment();
+
+        return view('users.show', compact('user', 'companies'));
     }
 
     public function edit(User $user)
@@ -258,9 +274,10 @@ class UserController extends Controller
             ->orderBy('name')
             ->get();
 
-        $user->load('roles');
+        $user->load(['roles', 'companies']);
+        $companies = $this->availableCompaniesForAssignment();
 
-        return view('users.form', compact('user', 'roles'));
+        return view('users.edit', compact('user', 'roles', 'companies'));
     }
 
     public function update(Request $request, User $user)
@@ -279,6 +296,9 @@ class UserController extends Controller
                 'phone' => 'required|string|max:20|unique:users,phone,' . $user->id . ',id,company_id,' . current_company_id(),
                 'role_id' => 'required|exists:roles,id',
                 'status' => 'required|in:active,inactive',
+                'companies' => 'required|array|min:1',
+                'companies.*' => 'exists:companies,id',
+                'primary_company_id' => 'required|exists:companies,id',
             ];
 
             if ($request->filled('password')) {
@@ -294,15 +314,25 @@ class UserController extends Controller
                     ->withInput($request->except(['password', 'password_confirmation']));
             }
 
+            $primaryCompanyId = (int) $request->primary_company_id;
+            if (!in_array($primaryCompanyId, array_map('intval', $request->companies ?? []), true)) {
+                DB::rollBack();
+                return redirect()->back()
+                    ->withErrors(['primary_company_id' => 'Primary company must be one of the selected companies.'])
+                    ->withInput($request->except(['password', 'password_confirmation']));
+            }
+
             $userData = [
                 'name' => $request->name,
                 'phone' => $this->formatPhoneNumber($request->phone),
                 'email' => $request->email,
                 'status' => $request->status,
                 'is_active' => $request->status === 'active' ? 'yes' : 'no',
+                'company_id' => $primaryCompanyId,
             ];
 
             $user->update($userData);
+            $this->syncUserCompanies($user, $request->companies, $primaryCompanyId);
 
             // Update password if provided using PasswordService
             if ($request->filled('password')) {
@@ -462,6 +492,38 @@ class UserController extends Controller
         return redirect()->route('users.edit', $user)->with('success', 'Roles assigned successfully!');
     }
 
+    public function assignCompanies(Request $request, User $user)
+    {
+        $actor = auth()->user();
+
+        if (!($actor && ($actor->hasRole('super-admin') ||
+            ($actor->company_id && $user->company_id && $actor->company_id === $user->company_id) ||
+            $user->companies()->where('companies.id', $actor->company_id)->exists()))) {
+            abort(403, 'Unauthorized access.');
+        }
+
+        $request->validate([
+            'companies' => 'required|array|min:1',
+            'companies.*' => 'exists:companies,id',
+            'primary_company_id' => 'required|exists:companies,id',
+        ]);
+
+        $primaryCompanyId = (int) $request->primary_company_id;
+        if (!in_array($primaryCompanyId, array_map('intval', $request->companies), true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Primary company must be one of the selected companies.',
+            ], 422);
+        }
+
+        $this->syncUserCompanies($user, $request->companies, $primaryCompanyId);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Companies assigned successfully.',
+        ]);
+    }
+
    public function assignBranches(Request $request, User $user)
     {
         $actor = auth()->user();
@@ -617,6 +679,39 @@ class UserController extends Controller
 
         // Return as is if no pattern matches
         return $phone;
+    }
+
+    private function availableCompaniesForAssignment()
+    {
+        $actor = auth()->user();
+
+        if ($actor->hasRole('super-admin')) {
+            return Company::orderBy('name')->get();
+        }
+
+        $companyIds = $actor->companies()->pluck('companies.id')->toArray();
+        if ($actor->company_id) {
+            $companyIds[] = $actor->company_id;
+        }
+
+        $companyIds = array_values(array_unique(array_filter($companyIds)));
+
+        if (empty($companyIds)) {
+            return collect();
+        }
+
+        return Company::whereIn('id', $companyIds)->orderBy('name')->get();
+    }
+
+    private function syncUserCompanies(User $user, array $companyIds, int $primaryCompanyId): void
+    {
+        $syncData = [];
+        foreach ($companyIds as $companyId) {
+            $syncData[(int) $companyId] = ['is_default' => (int) $companyId === $primaryCompanyId];
+        }
+
+        $user->companies()->sync($syncData);
+        $user->update(['company_id' => $primaryCompanyId]);
     }
 
     /**

@@ -51,8 +51,7 @@
                                     <tr>
                                         <th>Branch Name</th>
                                         <th>Phone</th>
-                                        <th>Email</th>
-                                        <th>Manager</th>
+                                        <th>Company</th>
                                         <th>Status</th>
                                         <th>Actions</th>
                                     </tr>
@@ -102,8 +101,7 @@ $(document).ready(function() {
         columns: [
             { data: 'branch_name', name: 'branch_name' },
             { data: 'phone', name: 'phone' },
-            { data: 'email', name: 'email' },
-            { data: 'manager_name', name: 'manager_name' },
+            { data: 'company_name', name: 'company_name' },
             { data: 'status', name: 'status', orderable: false, searchable: false },
             { data: 'actions', name: 'actions', orderable: false, searchable: false }
         ],

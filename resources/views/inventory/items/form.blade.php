@@ -252,6 +252,59 @@
         @error('reorder_level') <div class="invalid-feedback">{{ $message }}</div> @enderror
     </div>
 
+    @php
+        $itemHasOpening = isset($item) && (
+            ($item->has_opening_balance ?? false) ||
+            ($item->opening_balance_quantity ?? 0) > 0 ||
+            ($item->opening_balance_value ?? 0) > 0
+        );
+        $hasOpeningBalanceChecked = old('has_opening_balance') !== null
+            ? (bool) old('has_opening_balance')
+            : false;
+    @endphp
+
+    @if(!isset($item) || !$itemHasOpening)
+    <div class="col-md-12 mb-2 field-product" id="has_opening_balance_wrap">
+        <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" name="has_opening_balance" value="1"
+                   id="has_opening_balance" {{ $hasOpeningBalanceChecked ? 'checked' : '' }}>
+            <label class="form-check-label" for="has_opening_balance">
+                Has Opening Balance
+            </label>
+        </div>
+        <small class="text-muted">
+            Enable to record starting stock at
+            @if(!empty($loginLocationName))
+                <strong>{{ $loginLocationName }}</strong>
+            @else
+                your current location
+            @endif
+            when saving this item.
+        </small>
+    </div>
+
+    <div class="col-md-4 mb-3 field-product" id="opening_balance_fields_wrap" style="{{ $hasOpeningBalanceChecked ? '' : 'display:none;' }}">
+        <label class="form-label" for="opening_balance_quantity">Opening Balance Quantity <span class="text-danger">*</span></label>
+        <input type="number" step="0.01" min="0.01" name="opening_balance_quantity" id="opening_balance_quantity"
+            class="form-control @error('opening_balance_quantity') is-invalid @enderror"
+            value="{{ old('opening_balance_quantity', '') }}" placeholder="Enter quantity">
+        @error('opening_balance_quantity') <div class="invalid-feedback">{{ $message }}</div> @enderror
+        <small class="text-muted">Requires cost price and track stock. Creates stock movement and opening balance record.</small>
+        <div class="mt-1">
+            <small class="text-muted">Opening balance value: <strong id="opening_balance_value_display">0.00</strong></small>
+        </div>
+    </div>
+    @elseif(isset($item))
+    <div class="col-md-12 mb-2">
+        <div class="alert alert-success py-2 mb-0">
+            <i class="bx bx-check-circle me-1"></i>
+            <strong>Opening balance recorded:</strong>
+            {{ number_format($item->opening_balance_quantity ?? 0, 2) }} {{ $item->unit_of_measure }}
+            (value: {{ number_format($item->opening_balance_value ?? 0, 2) }})
+        </div>
+    </div>
+    @endif
+
     @if(isset($item))
     <div class="col-md-12 mb-2">
         <div class="alert alert-info py-2 mb-0">
@@ -409,12 +462,62 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    function calculateOpeningBalanceValue() { /* opening balance UI deprecated */ }
-    
-    function toggleOpeningBalanceFields() { /* opening balance UI deprecated */ }
-    
-    // If editing and item already has opening balance, keep quantity readonly and do not recalc
-    const alreadyHasOpening = false;
+    const openingBalanceQtyInput = document.getElementById('opening_balance_quantity');
+    const openingBalanceValueDisplay = document.getElementById('opening_balance_value_display');
+
+    function calculateOpeningBalanceValue() {
+        if (!openingBalanceQtyInput || !openingBalanceValueDisplay || !costPriceInput) {
+            return;
+        }
+
+        const qty = parseFloat(openingBalanceQtyInput.value) || 0;
+        const cost = parseFloat(costPriceInput.value) || 0;
+        openingBalanceValueDisplay.textContent = (qty * cost).toFixed(2);
+    }
+
+    const hasOpeningBalanceCheckbox = document.getElementById('has_opening_balance');
+    const openingBalanceFieldsWrap = document.getElementById('opening_balance_fields_wrap');
+    const hasOpeningBalanceWrap = document.getElementById('has_opening_balance_wrap');
+
+    function toggleOpeningBalanceFields() {
+        const isProduct = itemTypeSelect.value === 'product';
+
+        if (hasOpeningBalanceWrap) {
+            hasOpeningBalanceWrap.style.display = isProduct ? '' : 'none';
+        }
+
+        if (!isProduct) {
+            if (hasOpeningBalanceCheckbox) {
+                hasOpeningBalanceCheckbox.checked = false;
+            }
+            if (openingBalanceFieldsWrap) {
+                openingBalanceFieldsWrap.style.display = 'none';
+            }
+            if (openingBalanceQtyInput) {
+                openingBalanceQtyInput.value = '';
+                openingBalanceQtyInput.removeAttribute('required');
+            }
+            calculateOpeningBalanceValue();
+            return;
+        }
+
+        const enabled = hasOpeningBalanceCheckbox ? hasOpeningBalanceCheckbox.checked : false;
+
+        if (openingBalanceFieldsWrap) {
+            openingBalanceFieldsWrap.style.display = enabled ? '' : 'none';
+        }
+
+        if (openingBalanceQtyInput) {
+            if (enabled) {
+                openingBalanceQtyInput.setAttribute('required', 'required');
+            } else {
+                openingBalanceQtyInput.value = '';
+                openingBalanceQtyInput.removeAttribute('required');
+            }
+        }
+
+        calculateOpeningBalanceValue();
+    }
 
     function toggleWholesaleFields() {
         const cb = document.getElementById('has_wholesale');
@@ -457,15 +560,18 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Toggle opening balance fields when checkbox changes
-    // opening balance checkbox removed
-    
-    // Calculate opening balance value when cost price or quantity changes
-    if (costPriceInput && !alreadyHasOpening) {
+    if (hasOpeningBalanceCheckbox) {
+        hasOpeningBalanceCheckbox.addEventListener('change', toggleOpeningBalanceFields);
+    }
+
+    if (costPriceInput) {
         costPriceInput.addEventListener('input', calculateOpeningBalanceValue);
     }
-    
-    // opening balance inputs removed
+
+    if (openingBalanceQtyInput) {
+        openingBalanceQtyInput.addEventListener('input', calculateOpeningBalanceValue);
+        calculateOpeningBalanceValue();
+    }
     
     // Toggle sales revenue account field
     const hasDifferentSalesRevenueAccountCheckbox = document.getElementById('has_different_sales_revenue_account');

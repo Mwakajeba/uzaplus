@@ -247,6 +247,7 @@ Route::get('/dashboard/net-income-trend', [DashboardController::class, 'netIncom
 // Change Branch Routes (excluded from require.branch middleware to avoid infinite redirects)
 Route::get('/change-branch', [ChangeBranchController::class, 'show'])->middleware('auth')->name('change-branch');
 Route::post('/change-branch', [ChangeBranchController::class, 'change'])->middleware('auth')->name('change-branch.submit');
+Route::get('/change-branch/branches', [ChangeBranchController::class, 'branches'])->middleware('auth')->name('change-branch.branches');
 Route::get('/change-branch/locations', [ChangeBranchController::class, 'locations'])->middleware('auth')->name('change-branch.locations');
 
 // Reports Route
@@ -299,6 +300,7 @@ Route::middleware(['auth', 'require.branch'])->group(function () {
     // User role assignment
     Route::post('users/{user}/assign-roles', [RolePermissionController::class, 'assignToUser'])->name('users.assign-roles');
     Route::delete('users/{user}/remove-role', [RolePermissionController::class, 'removeFromUser'])->name('users.remove-role');
+    Route::post('users/{user}/assign-companies', [\App\Http\Controllers\UserController::class, 'assignCompanies'])->name('users.assign-companies');
     Route::post('users/{user}/assign-branches', [\App\Http\Controllers\UserController::class, 'assignBranches'])->name('users.assign-branches');
     Route::post('users/{user}/assign-locations', [\App\Http\Controllers\UserController::class, 'assignLocations'])->name('users.assign-locations');
     Route::delete('users/{user}/locations/{location}', [\App\Http\Controllers\UserController::class, 'removeLocation'])->name('users.locations.remove');
@@ -333,7 +335,13 @@ Route::prefix('settings')->name('settings.')->middleware(['auth', 'company.scope
 
     // Company Settings
     Route::get('/company', [SettingsController::class, 'companySettings'])->name('company');
-    Route::put('/company', [SettingsController::class, 'updateCompanySettings'])->name('company.update');
+    Route::get('/company/data', [SettingsController::class, 'companiesData'])->name('company.data');
+    Route::get('/company/create', [SettingsController::class, 'createCompany'])->name('company.create');
+    Route::post('/company', [SettingsController::class, 'storeCompany'])->name('company.store');
+    Route::get('/company/{company}', [SettingsController::class, 'showCompany'])->name('company.show');
+    Route::get('/company/{company}/edit', [SettingsController::class, 'editCompany'])->name('company.edit');
+    Route::put('/company/{company}', [SettingsController::class, 'updateCompany'])->name('company.update');
+    Route::delete('/company/{company}', [SettingsController::class, 'destroyCompany'])->name('company.destroy');
 
     // Branch Settings
     Route::get('/branches', [SettingsController::class, 'branchSettings'])->name('branches');
@@ -1753,6 +1761,7 @@ Route::prefix('period-closing')->name('settings.period-closing.')->group(functio
 ////////////////////////////////////////////// END SALES MANAGEMENT ///////////////////////////////////////////
 
 Route::post('/logout', function () {
+    \App\Support\UserContext::clearSession();
     Auth::logout();
     return redirect('/')->with('success', 'You are successfully logout.');
 })->middleware('auth');

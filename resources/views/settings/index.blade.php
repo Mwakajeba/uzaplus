@@ -51,9 +51,9 @@
                                             <i class="bx bx-building fs-1 text-primary"></i>
                                         </div>
                                         <h5 class="card-title">Company Settings</h5>
-                                        <p class="card-text">Manage your company information and preferences.</p>
+                                        <p class="card-text">Manage multiple companies — add, view, edit, and delete company records.</p>
                                         <a href="{{ route('settings.company') }}" class="btn btn-primary">
-                                            <i class="bx bx-cog me-1"></i> Configure
+                                            <i class="bx bx-cog me-1"></i> Manage Companies
                                         </a>
                                     </div>
                                 </div>

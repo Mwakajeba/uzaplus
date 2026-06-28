@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use App\Models\User;
+use App\Support\UserContext;
 use Jenssegers\Agent\Facades\Agent;
 
 class AuthController extends Controller
@@ -191,7 +192,9 @@ class AuthController extends Controller
                 ]);
             }
 
-            return redirect()->intended('/change-branch');
+            UserContext::clearSession();
+
+            return redirect()->intended(route('change-branch'));
         }
 
         LoginAttempt::record($request->phone, $request->ip(), $request->userAgent(), false);

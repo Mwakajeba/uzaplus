@@ -10,10 +10,7 @@ use App\Models\ChartAccount;
 use App\Models\AccountClassGroup;
 use App\Models\GlTransaction;
 use App\Models\BankReconciliation;
-use App\Models\Journal;
-use App\Models\Payment;
 use App\Models\Penalty;
-use App\Models\Receipt;
 use App\Models\Branch;
 use App\Models\FiscalYear;
 use App\Services\InventoryStockService;
@@ -34,11 +31,7 @@ class DashboardController extends Controller
         
         if (!$company) {
             return view('dashboard', [
-                'balanceSheetData' => [],
                 'financialReportData' => [],
-                'recentJournals' => collect(),
-                'recentPayments' => collect(),
-                'recentReceipts' => collect(),
                 'previousYearData' => [],
                 'totalInventoryValue' => 0,
                 'totalInventoryItemsCount' => 0,
@@ -47,6 +40,8 @@ class DashboardController extends Controller
                 'totalExpensesToday' => 0,
                 'outstandingInvoicesAmount' => 0,
                 'outstandingInvoicesCount' => 0,
+                'supplierOutstandingInvoicesAmount' => 0,
+                'supplierOutstandingInvoicesCount' => 0,
                 'totalCustomers' => 0,
                 'roomsOccupied' => 0,
                 'totalRooms' => 0,
@@ -73,46 +68,7 @@ class DashboardController extends Controller
             session(['branch_id' => $branchId]);
         }
         $today = now()->toDateString();
-        $startOfMonth = now()->startOfMonth()->toDateString();
-        $endOfMonth = now()->endOfMonth()->toDateString();
 
-        // Get recent activities - filter by company and branch and current month
-        $recentJournals = Journal::whereHas('branch', function($query) use ($company) {
-            $query->where('company_id', $company->id);
-        })
-        ->when(!empty($permittedBranchIds), fn($q) => $q->whereIn('branch_id', $permittedBranchIds))
-        ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
-        ->whereBetween('date', [$startOfMonth, $endOfMonth])
-        ->with(['user', 'branch'])
-        ->latest()
-        ->take(5)
-        ->get();
-        
-        $recentPayments = Payment::whereHas('branch', function($query) use ($company) {
-            $query->where('company_id', $company->id);
-        })
-        ->when(!empty($permittedBranchIds), fn($q) => $q->whereIn('branch_id', $permittedBranchIds))
-        ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
-        ->whereBetween('date', [$startOfMonth, $endOfMonth])
-        ->with(['user', 'branch'])
-        ->latest()
-        ->take(5)
-        ->get();
-        
-        $recentReceipts = Receipt::whereHas('branch', function($query) use ($company) {
-            $query->where('company_id', $company->id);
-        })
-        ->when(!empty($permittedBranchIds), fn($q) => $q->whereIn('branch_id', $permittedBranchIds))
-        ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
-        ->whereBetween('date', [$startOfMonth, $endOfMonth])
-        ->with(['user', 'branch', 'customer'])
-        ->latest()
-        ->take(5)
-        ->get();
-            
-
-
-        
         // Restore essential financial payload (cache-backed) so dashboard is populated.
         $currentFiscalYear = FiscalYear::forCompany($company->id)
             ->whereDate('start_date', '<=', $today)
@@ -128,7 +84,6 @@ class DashboardController extends Controller
             $ytdEnd = $today;
         }
 
-        $balanceSheetData = $this->getBalanceSheetData($branchId, $permittedBranchIds);
         $financialReportData = $this->getFinancialReportData($branchId, $permittedBranchIds, $ytdEnd, $ytdEnd, $ytdStart);
         $cumulativeProfitLoss = $this->getCumulativeProfitLoss($branchId, $permittedBranchIds, $ytdEnd);
         $netProfitYtd = $financialReportData['profitLoss'] ?? 0;
@@ -146,6 +101,8 @@ class DashboardController extends Controller
         $totalExpensesToday = (float) ($cards['totalExpensesToday'] ?? 0);
         $outstandingInvoicesAmount = (float) ($cards['outstandingInvoicesAmount'] ?? 0);
         $outstandingInvoicesCount = (int) ($cards['outstandingInvoicesCount'] ?? 0);
+        $supplierOutstandingInvoicesAmount = (float) ($cards['supplierOutstandingInvoicesAmount'] ?? 0);
+        $supplierOutstandingInvoicesCount = (int) ($cards['supplierOutstandingInvoicesCount'] ?? 0);
         $totalCustomers = (int) ($cards['totalCustomers'] ?? 0);
         $cashCollectedToday = (float) ($cards['cashCollectedToday'] ?? 0);
         $revenueThisMonth = (float) ($cards['revenueThisMonth'] ?? 0);
@@ -171,11 +128,7 @@ class DashboardController extends Controller
         ]);
 
         return view('dashboard', [
-            'balanceSheetData' => $balanceSheetData,
             'financialReportData' => $financialReportData,
-            'recentJournals' => $recentJournals,
-            'recentPayments' => $recentPayments,
-            'recentReceipts' => $recentReceipts,
             'previousYearData' => $previousYearData,
             'cumulativeProfitLoss' => $cumulativeProfitLoss,
             'totalInventoryValue' => $totalInventoryValue,
@@ -186,6 +139,8 @@ class DashboardController extends Controller
             'totalExpensesToday' => $totalExpensesToday,
             'outstandingInvoicesAmount' => $outstandingInvoicesAmount,
             'outstandingInvoicesCount' => $outstandingInvoicesCount,
+            'supplierOutstandingInvoicesAmount' => $supplierOutstandingInvoicesAmount,
+            'supplierOutstandingInvoicesCount' => $supplierOutstandingInvoicesCount,
             'totalCustomers' => $totalCustomers,
             'cashCollectedToday' => $cashCollectedToday,
             'pendingApprovalsCount' => $pendingApprovalsCount,
@@ -292,85 +247,6 @@ class DashboardController extends Controller
             'recordsTotal' => $data->count(),
             'recordsFiltered' => $data->count(),
         ]);
-    }
-    
-    private function getBalanceSheetData($branchId = null, array $permittedBranchIds = [])
-    {
-        $company = auth()->user()->company;
-        
-        if (!$company) {
-            return [];
-        }
-        
-        $cacheKey = 'dashboard:balanceSheetData:' . $company->id . ':' . ($branchId ?: 'all') . ':' . md5(json_encode($permittedBranchIds));
-        return Cache::remember($cacheKey, now()->addMinutes(10), function () use ($company, $branchId, $permittedBranchIds) {
-        // Get balance sheet data directly from gl_transactions
-        // Balance sheet shows cumulative balances up to today (no date filter)
-        // This ensures all historical balances are included, including retained earnings from previous years
-        $query = DB::table('gl_transactions')
-            ->join('chart_accounts', 'gl_transactions.chart_account_id', '=', 'chart_accounts.id')
-            ->join('account_class_groups', 'chart_accounts.account_class_group_id', '=', 'account_class_groups.id')
-            ->join('account_class', 'account_class_groups.class_id', '=', 'account_class.id')
-            ->where('account_class_groups.company_id', $company->id)
-            // Filter to only include transactions up to today
-            ->where('gl_transactions.date', '<=', now()->endOfDay())
-            ->select(
-                'account_class.name as class_name',
-                'account_class_groups.group_code as class_code',
-                DB::raw('SUM(CASE WHEN gl_transactions.nature = "debit" THEN gl_transactions.amount ELSE 0 END) as total_debit'),
-                DB::raw('SUM(CASE WHEN gl_transactions.nature = "credit" THEN gl_transactions.amount ELSE 0 END) as total_credit'),
-                DB::raw('COUNT(DISTINCT chart_accounts.id) as account_count')
-            )
-            ->groupBy('account_class.id', 'account_class.name', 'account_class_groups.group_code');
-
-        if (!empty($permittedBranchIds)) {
-            $query->whereIn('gl_transactions.branch_id', $permittedBranchIds);
-        }
-        if ($branchId) {
-            $query->where('gl_transactions.branch_id', $branchId);
-        }
-
-        $balanceSheetData = $query->get()
-            ->map(function ($item) {
-                // Calculate balance based on account class
-                $balance = 0;
-                switch (strtolower($item->class_name)) {
-                    case 'assets':
-                        $balance = $item->total_debit - $item->total_credit; // Assets: debit increases
-                        break;
-                    case 'liabilities':
-                        $balance = $item->total_credit - $item->total_debit; // Liabilities: credit increases
-                        break;
-                    case 'equity':
-                        $balance = $item->total_credit - $item->total_debit; // Equity: credit increases
-                        break;
-                    case 'income':
-                    case 'revenue':
-                        $balance = $item->total_credit - $item->total_debit; // Revenue: credit increases
-                        break;
-                    case 'expenses':
-                    case 'expense':
-                        $balance = $item->total_debit - $item->total_credit; // Expenses: debit increases
-                        break;
-                    default:
-                        $balance = $item->total_debit - $item->total_credit;
-                }
-                
-                return [
-                    'class_name' => $item->class_name,
-                    'class_code' => $item->class_code,
-                    'balance' => $balance,
-                    'account_count' => $item->account_count
-                ];
-            })
-            ->sortByDesc(function ($item) {
-                return abs($item['balance']);
-            })
-            ->values()
-            ->toArray();
-            
-        return $balanceSheetData;
-        });
     }
     
     private function getFinancialReportData($branchId = null, array $permittedBranchIds = [], $balanceSheetEndDate = null, $incomeStatementEndDate = null, $incomeStatementStartDate = null)
@@ -1613,6 +1489,8 @@ class DashboardController extends Controller
                 'totalExpensesToday' => 0,
                 'outstandingInvoicesAmount' => 0,
                 'outstandingInvoicesCount' => 0,
+                'supplierOutstandingInvoicesAmount' => 0,
+                'supplierOutstandingInvoicesCount' => 0,
                 'totalCustomers' => 0,
                 'cashCollectedToday' => 0,
                 'revenueThisMonth' => 0,
@@ -1680,6 +1558,23 @@ class DashboardController extends Controller
                 ->whereNotIn('status', ['cancelled'])
                 ->count();
 
+            $supplierOutstandingBaseQuery = \App\Models\Purchase\PurchaseInvoice::query()
+                ->where('company_id', $company->id)
+                ->when(!empty($permittedBranchIds), fn($q) => $q->whereIn('branch_id', $permittedBranchIds))
+                ->when($branchId, fn($q) => $q->where('branch_id', $branchId))
+                ->where('status', '!=', 'cancelled')
+                ->whereColumn(
+                    'total_amount',
+                    '>',
+                    DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM payments WHERE reference_type = "purchase_invoice" AND reference_number = purchase_invoices.invoice_number AND supplier_id = purchase_invoices.supplier_id)')
+                );
+
+            $supplierOutstandingInvoicesCount = (int) (clone $supplierOutstandingBaseQuery)->count();
+
+            $supplierOutstandingInvoicesAmount = (float) ((clone $supplierOutstandingBaseQuery)
+                ->selectRaw('COALESCE(SUM(total_amount - (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE reference_type = "purchase_invoice" AND reference_number = purchase_invoices.invoice_number AND supplier_id = purchase_invoices.supplier_id)), 0) as outstanding')
+                ->value('outstanding') ?? 0);
+
             $totalCustomers = (int)\App\Models\Customer::query()
                 ->where('company_id', $company->id)
                 ->when(!empty($permittedBranchIds), fn($q) => $q->whereIn('branch_id', $permittedBranchIds))
@@ -1711,6 +1606,8 @@ class DashboardController extends Controller
                 'totalExpensesToday' => $totalExpensesToday,
                 'outstandingInvoicesAmount' => $outstandingInvoicesAmount,
                 'outstandingInvoicesCount' => $outstandingInvoicesCount,
+                'supplierOutstandingInvoicesAmount' => $supplierOutstandingInvoicesAmount,
+                'supplierOutstandingInvoicesCount' => $supplierOutstandingInvoicesCount,
                 'totalCustomers' => $totalCustomers,
                 'cashCollectedToday' => $cashCollectedToday,
                 'revenueThisMonth' => $revenueThisMonth,

@@ -275,21 +275,42 @@ use Vinkla\Hashids\Facades\Hashids;
         @endcan
         <!--end first row-->
 
-        @can('view total outstanding invoices card')
         <div class="row mt-3">
+            @can('view total outstanding invoices card')
             <div class="col-xl-3 col-md-6">
                 <div class="card radius-10 border-start border-0 border-3 border-warning">
                     <div class="card-body">
                         <div class="d-flex align-items-center">
                             <div class="flex-grow-1">
-                                <p class="mb-0 text-secondary">Total Outstanding Invoices</p>
+                                <p class="mb-0 text-secondary">Customer Outstanding Invoices</p>
                                 <h4 class="my-1 text-warning" id="outstandingInvoicesAmountValue">TZS {{ number_format($outstandingInvoicesAmount ?? 0, 2) }}</h4>
                                 <p class="mb-0 font-13">
-                                    <span class="text-warning"><i class="bx bx-file align-middle"></i> Unpaid balance (<span id="outstandingInvoicesCountValue">{{ $outstandingInvoicesCount ?? 0 }}</span>)</span>
+                                    <span class="text-warning"><i class="bx bx-file align-middle"></i> Unpaid customer invoices (<span id="outstandingInvoicesCountValue">{{ $outstandingInvoicesCount ?? 0 }}</span>)</span>
                                 </p>
                             </div>
                             <div class="widgets-icons-2 rounded-circle bg-gradient-warning text-white ms-auto">
                                 <i class='bx bx-file'></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            @endcan
+
+            @can('view purchases')
+            <div class="col-xl-3 col-md-6">
+                <div class="card radius-10 border-start border-0 border-3 border-danger">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <p class="mb-0 text-secondary">Suppliers Outstanding Invoices</p>
+                                <h4 class="my-1 text-danger" id="supplierOutstandingInvoicesAmountValue">TZS {{ number_format($supplierOutstandingInvoicesAmount ?? 0, 2) }}</h4>
+                                <p class="mb-0 font-13">
+                                    <span class="text-danger"><i class="bx bx-receipt align-middle"></i> Unpaid supplier invoices (<span id="supplierOutstandingInvoicesCountValue">{{ $supplierOutstandingInvoicesCount ?? 0 }}</span>)</span>
+                                </p>
+                            </div>
+                            <div class="widgets-icons-2 rounded-circle bg-gradient-blooker text-white ms-auto">
+                                <i class='bx bx-receipt'></i>
                             </div>
                         </div>
                     </div>
@@ -443,6 +464,16 @@ use Vinkla\Hashids\Facades\Hashids;
                     const outstandingCountEl = document.getElementById('outstandingInvoicesCountValue');
                     if (outstandingCountEl) {
                         outstandingCountEl.textContent = Number(data.outstandingInvoicesCount || 0).toLocaleString();
+                    }
+
+                    const supplierOutstandingAmountEl = document.getElementById('supplierOutstandingInvoicesAmountValue');
+                    if (supplierOutstandingAmountEl) {
+                        supplierOutstandingAmountEl.textContent = 'TZS ' + Number(data.supplierOutstandingInvoicesAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    }
+
+                    const supplierOutstandingCountEl = document.getElementById('supplierOutstandingInvoicesCountValue');
+                    if (supplierOutstandingCountEl) {
+                        supplierOutstandingCountEl.textContent = Number(data.supplierOutstandingInvoicesCount || 0).toLocaleString();
                     }
 
                     const totalCustomersEl = document.getElementById('totalCustomersValue');
@@ -934,7 +965,7 @@ use Vinkla\Hashids\Facades\Hashids;
         @can('view graphs')
         <!-- Balance Sheet Overview -->
         <div class="row">
-            <div class="col-12 col-lg-8 d-lg-flex align-items-lg-stretch">
+            <div class="col-12 d-lg-flex align-items-lg-stretch">
                 <div class="card radius-10 w-100">
                     <div class="card-body">
                         <div class="card border-0 shadow-sm mb-4" style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);">
@@ -973,127 +1004,11 @@ use Vinkla\Hashids\Facades\Hashids;
                     </div>
                 </div>
             </div>
-            <div class="col-12 col-lg-4 d-lg-flex align-items-lg-stretch">
-                <div class="card radius-10 w-100">
-                    <div class="card-header bg-transparent">Account Class Balances</div>
-                    <div class="card-body">
-                        <div class="table-responsive">
-                            <table class="table table-striped mb-0">
-                                <thead>
-                                    <tr>
-                                        <th>Class</th>
-                                        <th>Balance</th>
-                                        <th>Accounts</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @forelse($balanceSheetData as $item)
-                                    <tr>
-                                        <td>
-                                            <div>
-                                                <strong>{{ $item['class_code'] }}</strong>
-                                                <br>
-                                                <small class="text-muted">{{ $item['class_name'] }}</small>
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <span class="badge {{ $item['balance'] >= 0 ? 'bg-success' : 'bg-danger' }}">
-                                                TZS {{ number_format($item['balance'], 2) }}
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-info">{{ $item['account_count'] }}</span>
-                                        </td>
-                                    </tr>
-                                    @empty
-                                    <tr>
-                                        <td colspan="3" class="text-center text-muted">No account data available</td>
-                                    </tr>
-                                    @endforelse
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
         <!--end row-->
         @endcan
 
 
-
-        <!-- Recent Activities -->
-        <div class="row row-cols-1 row-cols-lg-3">
-            <div class="col">
-                <div class="card radius-10">
-                    <div class="card-header bg-transparent">
-                        <h6 class="mb-0"><i class="bx bx-book-open me-2"></i>Recent Journals</h6>
-                    </div>
-                    <div class="card-body">
-                        @forelse($recentJournals as $journal)
-                        <div class="d-flex align-items-center mb-3">
-                            <div class="widgets-icons bg-light-primary text-primary me-3">
-                                <i class="bx bx-book"></i>
-                            </div>
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">{{ $journal->reference }}</h6>
-                                <p class="mb-0 text-muted">{{ Str::limit($journal->description, 30) }}</p>
-                                <small class="text-muted">{{ $journal->date ? $journal->date->format('M d, Y') : 'N/A' }}</small>
-                            </div>
-                        </div>
-                        @empty
-                        <p class="text-muted text-center">No recent journals</p>
-                        @endforelse
-                    </div>
-                </div>
-            </div>
-            <div class="col">
-                <div class="card radius-10">
-                    <div class="card-header bg-transparent">
-                        <h6 class="mb-0"><i class="bx bx-money me-2"></i>Recent Payments</h6>
-                    </div>
-                    <div class="card-body">
-                        @forelse($recentPayments as $payment)
-                        <div class="d-flex align-items-center mb-3">
-                            <div class="widgets-icons bg-light-success text-success me-3">
-                                <i class="bx bx-money"></i>
-                            </div>
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">{{ $payment->reference }}</h6>
-                                <p class="mb-0 text-muted">{{ Str::limit($payment->description, 30) }}</p>
-                                <small class="text-muted">{{ $payment->date ? $payment->date->format('M d, Y') : 'N/A' }}</small>
-                            </div>
-                        </div>
-                        @empty
-                        <p class="text-muted text-center">No recent payments</p>
-                        @endforelse
-                    </div>
-                </div>
-            </div>
-            <div class="col">
-                <div class="card radius-10">
-                    <div class="card-header bg-transparent">
-                        <h6 class="mb-0"><i class="bx bx-receipt me-2"></i>Recent Receipts</h6>
-                    </div>
-                    <div class="card-body">
-                        @forelse($recentReceipts as $receipt)
-                        <div class="d-flex align-items-center mb-3">
-                            <div class="widgets-icons bg-light-success text-success me-3">
-                                <i class="bx bx-receipt"></i>
-                            </div>
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">{{ $receipt->reference }}</h6>
-                                <p class="mb-0 text-muted">{{ $receipt->description ?? 'N/A' }}</p>
-                                <small class="text-muted">{{ $receipt->date ? $receipt->date->format('M d, Y') : 'N/A' }}</small>
-                            </div>
-                        </div>
-                        @empty
-                        <p class="text-muted text-center">No recent receipts</p>
-                        @endforelse
-                    </div>
-                </div>
-            </div>
-        </div>
 
         <!-- Financial Report Summary -->
         @can('view financial reports')

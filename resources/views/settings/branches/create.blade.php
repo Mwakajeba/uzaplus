@@ -15,12 +15,12 @@
         <hr/>
 
         <div class="row">
-            <div class="col-12">
+            <div class="col-12 col-lg-8">
                 <div class="card">
                     <div class="card-body">
                         <h4 class="card-title mb-4">Add New Branch</h4>
-                        
-                        @if(isset($errors) && $errors->any())
+
+                        @if($errors->any())
                             <div class="alert alert-danger alert-dismissible fade show" role="alert">
                                 <i class="bx bx-error-circle me-2"></i>
                                 Please fix the following errors:
@@ -33,112 +33,63 @@
                             </div>
                         @endif
 
-                        <form action="{{ route('settings.branches.store') }}" method="POST" enctype="multipart/form-data">
+                        <form action="{{ route('settings.branches.store') }}" method="POST">
                             @csrf
-                            
+
                             <div class="row">
                                 <div class="col-md-6">
                                     <div class="mb-3">
-                                        <label for="name" class="form-label">Branch Name <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control {{ isset($errors) && $errors->has('name') ? 'is-invalid' : '' }}" 
-                                               id="name" name="name" value="{{ old('name') }}" 
-                                               placeholder="Enter branch name" required>
-                                        @if(isset($errors) && $errors->has('name'))
-                                            <div class="invalid-feedback">{{ $errors->first('name') }}</div>
-                                        @endif
+                                        <label for="company_id" class="form-label">Company <span class="text-danger">*</span></label>
+                                        <select class="form-select select2-company @error('company_id') is-invalid @enderror"
+                                                id="company_id" name="company_id" required>
+                                            <option value="">Select company</option>
+                                            @foreach($companies as $company)
+                                                <option value="{{ $company->id }}" {{ (string) old('company_id', auth()->user()->company_id) === (string) $company->id ? 'selected' : '' }}>
+                                                    {{ $company->name }}
+                                                </option>
+                                            @endforeach
+                                        </select>
+                                        @error('company_id')
+                                            <div class="invalid-feedback">{{ $message }}</div>
+                                        @enderror
                                     </div>
                                 </div>
 
                                 <div class="col-md-6">
                                     <div class="mb-3">
-                                        <label for="branch_name" class="form-label">Display Name <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control {{ isset($errors) && $errors->has('branch_name') ? 'is-invalid' : '' }}" 
-                                               id="branch_name" name="branch_name" value="{{ old('branch_name') }}" 
-                                               placeholder="Enter display name" required>
-                                        @if(isset($errors) && $errors->has('branch_name'))
-                                            <div class="invalid-feedback">{{ $errors->first('branch_name') }}</div>
-                                        @endif
+                                        <label for="branch_name" class="form-label">Branch Name <span class="text-danger">*</span></label>
+                                        <input type="text" class="form-control @error('branch_name') is-invalid @enderror"
+                                               id="branch_name" name="branch_name" value="{{ old('branch_name') }}"
+                                               placeholder="Enter branch name" required>
+                                        @error('branch_name')
+                                            <div class="invalid-feedback">{{ $message }}</div>
+                                        @enderror
                                     </div>
                                 </div>
 
                                 <div class="col-md-6">
                                     <div class="mb-3">
                                         <label for="phone" class="form-label">Phone Number <span class="text-danger">*</span></label>
-                                        <input type="tel" class="form-control {{ isset($errors) && $errors->has('phone') ? 'is-invalid' : '' }}" 
-                                               id="phone" name="phone" value="{{ old('phone') }}" 
+                                        <input type="tel" class="form-control @error('phone') is-invalid @enderror"
+                                               id="phone" name="phone" value="{{ old('phone') }}"
                                                placeholder="Enter phone number" required>
-                                        @if(isset($errors) && $errors->has('phone'))
-                                            <div class="invalid-feedback">{{ $errors->first('phone') }}</div>
-                                        @endif
-                                    </div>
-                                </div>
-
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="email" class="form-label">Email Address</label>
-                                        <input type="email" class="form-control {{ isset($errors) && $errors->has('email') ? 'is-invalid' : '' }}" 
-                                               id="email" name="email" value="{{ old('email') }}" 
-                                               placeholder="Enter email address">
-                                        @if(isset($errors) && $errors->has('email'))
-                                            <div class="invalid-feedback">{{ $errors->first('email') }}</div>
-                                        @endif
-                                    </div>
-                                </div>
-
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="manager_id" class="form-label">Manager</label>
-                                        <select class="form-select select2-single {{ isset($errors) && $errors->has('manager_id') ? 'is-invalid' : '' }}" 
-                                                id="manager_id" name="manager_id">
-                                            <option value="">Select Manager</option>
-                                            @foreach($users ?? [] as $user)
-                                                <option value="{{ $user->id }}" {{ old('manager_id') == $user->id ? 'selected' : '' }}>
-                                                    {{ $user->name }} ({{ $user->email }})
-                                                </option>
-                                            @endforeach
-                                        </select>
-                                        @if(isset($errors) && $errors->has('manager_id'))
-                                            <div class="invalid-feedback">{{ $errors->first('manager_id') }}</div>
-                                        @endif
-                                    </div>
-                                </div>
-
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="logo" class="form-label">Logo</label>
-                                        <input type="file" class="form-control {{ isset($errors) && $errors->has('logo') ? 'is-invalid' : '' }}" 
-                                               id="logo" name="logo" accept="image/*">
-                                        @if(isset($errors) && $errors->has('logo'))
-                                            <div class="invalid-feedback">{{ $errors->first('logo') }}</div>
-                                        @endif
-                                        <div class="form-text">Upload branch logo (max 2MB, formats: jpeg, png, jpg, gif, svg)</div>
+                                        @error('phone')
+                                            <div class="invalid-feedback">{{ $message }}</div>
+                                        @enderror
                                     </div>
                                 </div>
 
                                 <div class="col-md-6">
                                     <div class="mb-3">
                                         <label for="status" class="form-label">Status <span class="text-danger">*</span></label>
-                                        <select class="form-select {{ isset($errors) && $errors->has('status') ? 'is-invalid' : '' }}" 
+                                        <select class="form-select @error('status') is-invalid @enderror"
                                                 id="status" name="status" required>
-                                            {{-- Force default to Active on initial load --}}
-                                            <option value="active" selected>Active</option>
-                                            <option value="inactive">Inactive</option>
+                                            <option value="active" {{ old('status', 'active') === 'active' ? 'selected' : '' }}>Active</option>
+                                            <option value="inactive" {{ old('status') === 'inactive' ? 'selected' : '' }}>Inactive</option>
                                         </select>
-                                        @if(isset($errors) && $errors->has('status'))
-                                            <div class="invalid-feedback">{{ $errors->first('status') }}</div>
-                                        @endif
-                                    </div>
-                                </div>
-
-                                <div class="col-12">
-                                    <div class="mb-3">
-                                        <label for="address" class="form-label">Address <span class="text-danger">*</span></label>
-                                        <textarea class="form-control {{ isset($errors) && $errors->has('address') ? 'is-invalid' : '' }}" 
-                                                  id="address" name="address" rows="3" 
-                                                  placeholder="Enter branch address" required>{{ old('address') }}</textarea>
-                                        @if(isset($errors) && $errors->has('address'))
-                                            <div class="invalid-feedback">{{ $errors->first('address') }}</div>
-                                        @endif
+                                        @error('status')
+                                            <div class="invalid-feedback">{{ $message }}</div>
+                                        @enderror
                                     </div>
                                 </div>
                             </div>
@@ -157,15 +108,14 @@
                     </div>
                 </div>
             </div>
+
+            <div class="col-12 col-lg-4">
+                @include('settings.branches._guidelines')
+            </div>
         </div>
     </div>
 </div>
-<!--end page wrapper -->
-<!--start overlay-->
-<div class="overlay toggle-icon"></div>
-<!--end overlay-->
-<!--Start Back To Top Button--> <a href="javaScript:;" class="back-to-top"><i class='bx bxs-up-arrow-alt'></i></a>
-<!--End Back To Top Button-->
+
 <footer class="page-footer">
     <p class="mb-0">Copyright © {{ date('Y') }}. All right reserved. -- By SAFCO FINTECH</p>
 </footer>
@@ -173,10 +123,9 @@
 @push('scripts')
 <script nonce="{{ $cspNonce ?? '' }}">
 $(document).ready(function() {
-    // Initialize Select2 for manager dropdown
-    $('.select2-single').select2({
+    $('.select2-company').select2({
         theme: 'bootstrap-5',
-        placeholder: 'Select Manager',
+        placeholder: 'Search and select company',
         allowClear: true,
         width: '100%'
     });
@@ -184,4 +133,4 @@ $(document).ready(function() {
 </script>
 @endpush
 
-@endsection 
+@endsection

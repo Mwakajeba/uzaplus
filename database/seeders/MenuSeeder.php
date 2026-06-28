@@ -106,52 +106,6 @@ class MenuSeeder extends Seeder
                 ],
             ],
 
-            'Hotel & Property Management' => [
-                'icon' => 'bx bx-building-house',
-                'visibleRoutes' => [
-                    ['name' => 'Hotel Management', 'route' => 'hotel.management.index'],
-                    ['name' => 'Real Estate', 'route' => 'real.estate.index'],
-                    ['name' => 'Property Settings', 'route' => 'hotel.property.settings'],
-                ],
-                'hiddenRoutes' => [
-                    // Hotel Management Routes
-                    'rooms.index',
-                    'rooms.create',
-                    'rooms.edit',
-                    'rooms.destroy',
-                    'rooms.show',
-                    'bookings.index',
-                    'bookings.create',
-                    'bookings.edit',
-                    'bookings.destroy',
-                    'bookings.show',
-                    'guests.index',
-                    'guests.create',
-                    'guests.edit',
-                    'guests.destroy',
-                    'guests.show',
-                    'hotel.reports.index',
-
-                    // Real Estate Routes
-                    'properties.index',
-                    'properties.create',
-                    'properties.edit',
-                    'properties.destroy',
-                    'properties.show',
-                    'leases.index',
-                    'leases.create',
-                    'leases.edit',
-                    'leases.destroy',
-                    'leases.show',
-                    'tenants.index',
-                    'tenants.create',
-                    'tenants.edit',
-                    'tenants.destroy',
-                    'tenants.show',
-                    'property.reports.index',
-                ],
-            ],
-
             'Reports' => [
                 'icon' => 'bx bx-file',
                 'visibleRoutes' => [
@@ -159,7 +113,6 @@ class MenuSeeder extends Seeder
                     ['name' => 'Inventory Reports', 'route' => 'inventory.reports.index'],
                     ['name' => 'Sales Reports', 'route' => 'sales.reports.index'],
                     ['name' => 'Purchase Reports', 'route' => 'reports.purchases'],
-                    ['name' => 'Hotel Reports', 'route' => 'hotel.reports.index'],
                 ],
                 'hiddenRoutes' => [],
             ],
@@ -169,7 +122,7 @@ class MenuSeeder extends Seeder
                 'visibleRoutes' => [
                     ['name' => 'General Settings', 'route' => 'settings.index'],
                 ],
-                'hiddenRoutes' => ['settings.company', 'settings.branches', 'settings.user', 'settings.system', 'settings.backup', 'settings.branches.create', 'settings.branches.edit', 'settings.branches.destroy', 'settings.filetypes.index', 'settings.filetypes.create', 'settings.filetypes.edit', 'settings.filetypes.destroy', 'settings.inventory.index', 'settings.inventory.update', 'settings.inventory.locations.index', 'settings.inventory.locations.create', 'settings.inventory.locations.edit', 'settings.inventory.locations.destroy'],
+                'hiddenRoutes' => ['settings.company', 'settings.company.data', 'settings.company.create', 'settings.company.store', 'settings.company.show', 'settings.company.edit', 'settings.company.update', 'settings.company.destroy', 'settings.branches', 'settings.user', 'settings.system', 'settings.backup', 'settings.branches.create', 'settings.branches.edit', 'settings.branches.destroy', 'settings.filetypes.index', 'settings.filetypes.create', 'settings.filetypes.edit', 'settings.filetypes.destroy', 'settings.inventory.index', 'settings.inventory.update', 'settings.inventory.locations.index', 'settings.inventory.locations.create', 'settings.inventory.locations.edit', 'settings.inventory.locations.destroy'],
             ],
             // 'Chat' => [
             //     'icon' => 'bx bx-message',

@@ -55,6 +55,9 @@ return Application::configure(basePath: dirname(__DIR__))
                 // Set locale globally
                 $middleware->append(\App\Http\Middleware\SetLocale::class);
                 
+                // Apply company/branch session context globally for authenticated users
+                $middleware->append(\App\Http\Middleware\CompanyScopeMiddleware::class);
+
                 // Set default location globally for authenticated users
                 $middleware->append(\App\Http\Middleware\SetDefaultLocation::class);
                 

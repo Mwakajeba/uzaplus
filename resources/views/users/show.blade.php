@@ -67,8 +67,21 @@
                                                 </td>
                                             </tr>
                                             <tr>
-                                                <th scope="row">Company :</th>
-                                                <td>{{ $user->company->name ?? 'N/A' }}</td>
+                                                <th scope="row">Companies :</th>
+                                                <td>
+                                                    @if($user->companies && $user->companies->count() > 0)
+                                                        @foreach($user->companies as $company)
+                                                            <span class="badge {{ $company->pivot->is_default ? 'bg-success' : 'bg-primary' }} me-1 mb-1">
+                                                                {{ $company->name }}
+                                                                @if($company->pivot->is_default)
+                                                                    <small>(Primary)</small>
+                                                                @endif
+                                                            </span>
+                                                        @endforeach
+                                                    @else
+                                                        <span class="text-muted">{{ $user->company->name ?? 'N/A' }}</span>
+                                                    @endif
+                                                </td>
                                             </tr>
                                             <tr>
                                                 <th scope="row">Joined :</th>
@@ -126,15 +139,75 @@
                                 @endcan
                             </div>
 
-                            @can('assign branches')
+                            @can('edit user')
                             <div class="d-flex flex-wrap gap-2 mt-4">
-                                <!-- Existing buttons ... -->
+                                <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#assignCompanyModal">
+                                    <i class="bx bx-building"></i> Assign/View Companies
+                                </button>
+                            </div>
+                            @endcan
+
+                            @can('assign branches')
+                            <div class="d-flex flex-wrap gap-2 mt-2">
                                 <button type="button" class="btn btn-sm btn-info" data-bs-toggle="modal" data-bs-target="#assignBranchModal">
                                     <i class="bx bx-git-branch"></i> Assign/View Branch
                                 </button>
                                 <button type="button" class="btn btn-sm btn-secondary" data-bs-toggle="modal" data-bs-target="#assignLocationModal">
                                     <i class="bx bx-buildings"></i> Assign/View Locations
                                 </button>
+                            </div>
+                            @endcan
+
+                            <!-- Assign Company Modal -->
+                            @can('edit user')
+                            <div class="modal fade" id="assignCompanyModal" tabindex="-1" aria-labelledby="assignCompanyModalLabel" aria-hidden="true">
+                                <div class="modal-dialog modal-dialog-centered">
+                                    <div class="modal-content">
+                                        <form id="assignCompanyForm" action="{{ route('users.assign-companies', $user) }}" method="POST">
+                                            @csrf
+                                            <div class="modal-header">
+                                                <h5 class="modal-title" id="assignCompanyModalLabel">Assign Companies</h5>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                @php
+                                                    $assignedCompanyIds = $user->companies->pluck('id')->toArray();
+                                                    $modalPrimaryCompanyId = $user->companies->firstWhere('pivot.is_default', true)?->id ?? $user->company_id;
+                                                @endphp
+                                                <div class="mb-3">
+                                                    <label for="modal_companies" class="form-label fw-bold">Companies user can access</label>
+                                                    <select class="form-select select2-modal-companies" id="modal_companies" name="companies[]" multiple required>
+                                                        @foreach($companies as $company)
+                                                            <option value="{{ $company->id }}"
+                                                                {{ in_array($company->id, $assignedCompanyIds) ? 'selected' : '' }}>
+                                                                {{ $company->name }}
+                                                            </option>
+                                                        @endforeach
+                                                    </select>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <label for="modal_primary_company_id" class="form-label fw-bold">Primary company</label>
+                                                    <select class="form-select select2-modal-primary" id="modal_primary_company_id" name="primary_company_id" required>
+                                                        @foreach($companies as $company)
+                                                            @if(in_array($company->id, $assignedCompanyIds))
+                                                                <option value="{{ $company->id }}"
+                                                                    {{ (string) $modalPrimaryCompanyId === (string) $company->id ? 'selected' : '' }}>
+                                                                    {{ $company->name }}
+                                                                </option>
+                                                            @endif
+                                                        @endforeach
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-primary" id="assignCompanyBtn">
+                                                    <i class="bx bx-save"></i> Save
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
                             </div>
                             @endcan
 
@@ -270,6 +343,25 @@
                             <div class="row">
                                 <div class="col-md-6">
                                     <div class="mb-3">
+                                        <label class="form-label fw-bold">Companies</label>
+                                        <div>
+                                            @if($user->companies && $user->companies->count() > 0)
+                                                @foreach($user->companies as $company)
+                                                    <span class="badge {{ $company->pivot->is_default ? 'bg-success' : 'bg-primary' }} me-1 mb-1">
+                                                        {{ $company->name }}
+                                                        @if($company->pivot->is_default)
+                                                            (Primary)
+                                                        @endif
+                                                    </span>
+                                                @endforeach
+                                            @else
+                                                <span class="text-muted">{{ $user->company->name ?? 'Not assigned' }}</span>
+                                            @endif
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
                                         <label class="form-label fw-bold">Status</label>
                                         <p class="mb-0">
                                             @if($user->status === 'active')
@@ -343,6 +435,7 @@
 @endsection
 
 @push('scripts')
+@include('users._company_scripts')
 <script nonce="{{ $cspNonce ?? '' }}">
 $(function() {
     // Initialize any necessary scripts
@@ -394,6 +487,72 @@ function submitDeleteUserForm(userId) {
     // Submit the form
     document.body.appendChild(form);
     form.submit();
+}
+
+const assignCompanyForm = document.getElementById('assignCompanyForm');
+const assignCompanyModal = document.getElementById('assignCompanyModal');
+let modalCompanySelect2Ready = false;
+
+if (assignCompanyModal) {
+    assignCompanyModal.addEventListener('shown.bs.modal', function() {
+        if (!modalCompanySelect2Ready) {
+            initUserCompanySelect2({
+                companiesId: 'modal_companies',
+                primaryId: 'modal_primary_company_id',
+                dropdownParent: '#assignCompanyModal'
+            });
+            modalCompanySelect2Ready = true;
+        }
+    });
+}
+
+if (assignCompanyForm) {
+    assignCompanyForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const form = this;
+        const btn = document.getElementById('assignCompanyBtn');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<i class="bx bx-loader-alt bx-spin me-1"></i>Saving...';
+        btn.disabled = true;
+
+        fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Companies Assigned!',
+                    text: data.message || 'Company access updated.',
+                    timer: 2000,
+                    timerProgressBar: true
+                }).then(() => window.location.reload());
+            } else {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Error',
+                    text: data.message || 'Failed to assign companies.'
+                });
+            }
+        })
+        .catch(() => {
+            Swal.fire({
+                icon: 'error',
+                title: 'Error',
+                text: 'Network or server error.'
+            });
+        })
+        .finally(() => {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        });
+    });
 }
 
 document.getElementById('assignBranchForm').addEventListener('submit', function(e) {

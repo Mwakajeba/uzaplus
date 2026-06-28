@@ -62,6 +62,20 @@ class User extends Authenticatable
         return $this->belongsTo(Company::class);
     }
 
+    public function companies()
+    {
+        return $this->belongsToMany(Company::class, 'user_company')
+            ->withTimestamps()
+            ->withPivot(['is_default']);
+    }
+
+    public function defaultCompany()
+    {
+        return $this->belongsToMany(Company::class, 'user_company')
+            ->wherePivot('is_default', true)
+            ->limit(1);
+    }
+
     public function locations()
     {
         return $this->belongsToMany(\App\Models\InventoryLocation::class, 'location_user')
